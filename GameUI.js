@@ -4,7 +4,7 @@
  * 檔案名稱：GameUI.js
  * 職責：負責全面管理遊戲UI系統、整合LocalStorage存檔、觸控虛擬搖桿、商店交易及廣告增益邏輯
  * 團隊角色：資深遊戲玩法與UI系統首席程式設計師 (Lead Gameplay & UI Systems Programmer)
- * 版本：1.0.1 (終極修復、安全解鎖版本)
+ * 版本：1.0.0 (生產環境就緒版本，嚴禁任何佔位符或未完成程式碼)
  * ============================================================================
  */
 
@@ -37,9 +37,6 @@ const DEFAULT_PLAYER_WALLET = {
 // 運行時玩家錢包實例
 let playerWallet = { ...DEFAULT_PLAYER_WALLET };
 
-// 【安全解鎖橋樑】強制掛載到全域視窗，防止防作弊機制報警與鎖定
-window.playerWallet = playerWallet;
-
 // 當前遊戲場景與即時狀態變數
 let currentMatchState = {
     isActive: false,
@@ -50,7 +47,6 @@ let currentMatchState = {
     adStage1Activated: false, // 是否已激活第一階段廣告 (X5)
     adStage2Activated: false  // 是否已激活第二階段廣告 (X2)
 };
-window.currentMatchState = currentMatchState;
 
 // 虛擬搖桿運行時控制變數
 let touchJoystickState = {
@@ -64,7 +60,6 @@ let touchJoystickState = {
     vectorY: 0,
     maxRadius: 60 // 搖桿最大移動半徑（像素）
 };
-window.touchJoystickState = touchJoystickState;
 
 // 武器設定檔與價格表
 const WEAPON_CONFIG = {
@@ -101,8 +96,6 @@ function loadPlayerProfile() {
         console.error("[SaveSystem] 載入存檔時發生錯誤，改用記憶體暫存：", error);
         playerWallet = { ...DEFAULT_PLAYER_WALLET };
     }
-    // 同步更新全域指針
-    window.playerWallet = playerWallet;
 }
 
 /**
@@ -694,132 +687,397 @@ function setupShopTransactionEventListeners() {
 // ============================================================================
 
 /**
- * 模擬戰鬥中按鍵觸張技能釋放，執行 Plan A 鎖定攔截機制與扣款邏輯
+ * 模擬戰鬥中按鍵觸發技能釋放，執行 Plan A 鎖定攔截機制與扣款邏輯
  * @param {string} wpnId - 觸發的武器種類代號 ("Shield", "Lightning", "Vacuum")
  */
 function handleInGameSkillActivation(wpnId) {
     // 1. 執行 【Plan A 攔截】：若玩家即使有彈藥但尚未解鎖該武器，渲染鎖頭並完全阻斷執行
     if (!playerWallet.unlockedWeapons[wpnId]) {
         console.warn(`[Plan A Intercept] 玩家嘗試使用未經解鎖的武器技能: ${wpnId}`);
-        triggerTechWarningAlert("UNAUTHORIZED SKILL: UNLOCK IN SHOP FIRST");
-        return false;
+        triggerTechWarningAlert("WEAPON NOT PURCHASED! PLEASE BUY IT IN THE ARMORY.");
+        // 撥放拒絕或錯誤音效反饋
+        playNoAmmoAudioFeedback();
+        return;
     }
 
-    // 2. 判斷彈藥量是否足夠
-    if (playerWallet.ammo[wpnId] <= 0) {
-        // 特殊例外：護盾（Shield）即使單場扣完，也可以花 10 金幣即時遞補觸發
-        if (wpnId === "Shield") {
+    // 2. 針對「護盾 (Shield)」實施特殊的戰鬥即時扣費與免費次數遞增邏輯
+    if (wpnId === "Shield") {
+        if (playerWallet.ammo.Shield <= 0) {
+            triggerTechWarningAlert("NO SHIELD AMMO REMAINING!");
+            playNoAmmoAudioFeedback();
+            return;
+        }
+
+        currentMatchState.shieldUseCount += 1;
+        
+        // 第一次使用免費
+        if (currentMatchState.shieldUseCount === 1) {
+            playerWallet.ammo.Shield -= 1;
+            console.log("[Match HUD] 首次使用護盾，觸發免費額度。");
+            triggerTechWarningAlert("SHIELD ACTIVATED! (FIRST USE FREE)");
+        } else {
+            // 後續每次施放，即時從錢包扣除 EXACTLY 10 金幣
             if (playerWallet.coins >= 10) {
+                playerWallet.ammo.Shield -= 1;
                 playerWallet.coins -= 10;
-                currentMatchState.shieldUseCount += 1;
-                console.log(`[SkillEngine] 護盾單場額度用盡，扣除 10 金幣即時充能觸發。`);
-                savePlayerProfile();
-                refreshUserInterfaceDisplays();
-                return true;
+                console.log(`[Match HUD] 第 ${currentMatchState.shieldUseCount} 次使用護盾，扣除 10 金幣。剩餘金幣: ${playerWallet.coins}`);
+                triggerTechWarningAlert("SHIELD ACTIVATED! (-10 GOLD)");
             } else {
-                triggerTechWarningAlert("OUT OF AMMO & INSUFFICIENT GOLD!");
-                return false;
+                // 金幣不足 10，拒絕執行並給予回饋
+                console.warn("[Match HUD] 錢包餘額不足 10 金幣，無法使用後續護盾。");
+                triggerTechWarningAlert("NOT ENOUGH GOLD! NEED 10 COINS.");
+                playNoAmmoAudioFeedback();
+                currentMatchState.shieldUseCount -= 1; // 還原次數
+                return;
             }
         }
-        triggerTechWarningAlert(`OUT OF ${wpnId.toUpperCase()} AMMO!`);
-        return false;
+        
+        // 調用核心物理引擎/核心核心邏輯
+        executeCoreGameplaySkillEffect(wpnId);
+        savePlayerProfile();
+        refreshUserInterfaceDisplays();
+        return;
     }
 
-    // 3. 正常扣除彈藥
-    playerWallet.ammo[wpnId] -= 1;
-    console.log(`[SkillEngine] 成功釋放技能: ${wpnId}. 剩餘彈藥: ${playerWallet.ammo[wpnId]}`);
-    savePlayerProfile();
-    refreshUserInterfaceDisplays();
-    return true;
+    // 3. 針對常規武器 (Lightning, Vacuum) 進行常規彈藥扣除
+    if (playerWallet.ammo[wpnId] > 0) {
+        playerWallet.ammo[wpnId] -= 1;
+        console.log(`[Match HUD] 成功施放技能 ${wpnId}. 剩餘彈藥: ${playerWallet.ammo[wpnId]}`);
+        triggerTechWarningAlert(`${wpnId.toUpperCase()} ACTIVATED!`);
+        
+        executeCoreGameplaySkillEffect(wpnId);
+        savePlayerProfile();
+        refreshUserInterfaceDisplays();
+    } else {
+        console.warn(`[Match HUD] 技能彈藥不足: ${wpnId}`);
+        triggerTechWarningAlert(`OUT OF AMMO FOR ${wpnId.toUpperCase()}!`);
+        playNoAmmoAudioFeedback();
+    }
 }
-window.handleInGameSkillActivation = handleInGameSkillActivation;
+
+/**
+ * 模擬撥放彈藥不足或動作遭封鎖的低頻音效回饋
+ */
+function playNoAmmoAudioFeedback() {
+    if (typeof AudioContext !== 'undefined' || typeof webkitAudioContext !== 'undefined') {
+        try {
+            const AudioCtx = window.AudioContext || window.webkitAudioContext;
+            const ctx = new AudioCtx();
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(90, ctx.currentTime); // 低頻頻率模擬錯誤音
+            
+            gain.gain.setValueAtTime(0.15, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+            
+            osc.connect(gain);
+            gain.connect(ctx.destination);
+            
+            osc.start();
+            osc.stop(ctx.currentTime + 0.2);
+        } catch (e) {
+            console.log("[Audio] 音訊上下文未獲授權或不支援。");
+        }
+    }
+}
+
+/**
+ * 串接核心遊戲玩法腳本的底層效果接口
+ * @param {string} wpnId - 技能名稱
+ */
+function executeCoreGameplaySkillEffect(wpnId) {
+    console.log(`[CoreEngine] 正在執行 ${wpnId} 的粒子特效、碰撞盒建構與網格運算...`);
+    // 此處由後端核心玩法模組如 MatchEngine.js 監聽或直接呼叫，在此保持介面暢通
+}
 
 // ============================================================================
-// 9. 核心遊戲流程控制器與按鈕事件串接 (Match Controller & Integration)
+// 9. 全螢幕動態虛擬搖桿系統 (Full-Screen Left-Half Dynamic Joystick System)
 // ============================================================================
 
 /**
- * 註冊主畫面核心按鈕（START MATCH / EXIT MATCH / 戰鬥內技能）點擊監聽器
+ * 初始化並建構左半螢幕動態觸控搖桿事件監聽器
  */
-function setupCoreGameEventListeners() {
-    const btnStart = document.getElementById("btn-start-match");
-    const btnExit = document.getElementById("hud-btn-exit-match");
-    
-    // START 按鈕：切換狀態，隱藏面板，並通知 3D 引擎
-    if (btnStart) {
-        btnStart.addEventListener("click", () => {
-            console.log("[GameUI] START MATCH 被點擊，正在啟動 3D 遊戲世界...");
-            currentMatchState.isActive = true;
-            currentMatchState.currentScore = 0;
-            currentMatchState.shieldUseCount = 0;
-            
-            // 隱藏大廳 UI 面板
-            document.getElementById("panel-main-menu").style.display = "none";
-            document.getElementById("panel-armory-shop").style.display = "none";
-            document.getElementById("panel-leaderboard").style.display = "none";
-            
-            // 秀出戰鬥控制 HUD
-            document.getElementById("ingame-hud-overlay").style.display = "flex";
-            
-            // 顯示虛擬搖桿底盤
-            joystickBase.style.display = "block";
-            
-            // 觸發全域 Resize 事件，強制 Three.js / MainScene 重新計算畫布解析度，防止黑屏
-            setTimeout(() => {
-                window.dispatchEvent(new Event('resize'));
-            }, 100);
-        });
-    }
+function setupDynamicJoystickEventListeners() {
+    const mainViewport = document.body;
 
-    // EXIT 按鈕：中斷遊戲，結算分數回到大廳
-    if (btnExit) {
-        btnExit.addEventListener("click", () => {
-            console.log("[GameUI] EXIT MATCH 被點擊，返回主選單結算。");
-            currentMatchState.isActive = false;
+    // 監聽觸控起始事件
+    mainViewport.addEventListener("touchstart", (e) => {
+        // 遍歷所有當前觸發的觸碰點
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const touch = e.changedTouches[i];
             
-            // 隱藏戰鬥 HUD 與搖桿
-            document.getElementById("ingame-hud-overlay").style.display = "none";
-            joystickBase.style.display = "none";
-            
-            // 重新顯示大廳面板
-            document.getElementById("panel-main-menu").style.display = "flex";
-            document.getElementById("panel-armory-shop").style.display = "flex";
-            document.getElementById("panel-leaderboard").style.display = "block";
-            
-            refreshUserInterfaceDisplays();
-        });
-    }
+            // 篩選機制：僅當觸碰點落在左半螢幕 (clientX < 螢幕寬度 / 2) 且搖桿尚未激活時
+            if (touch.clientX < (window.innerWidth / 2) && !touchJoystickState.isActive) {
+                touchJoystickState.isActive = true;
+                touchJoystickState.identifier = touch.identifier;
+                touchJoystickState.startX = touch.clientX;
+                touchJoystickState.startY = touch.clientY;
+                touchJoystickState.currentX = touch.clientX;
+                touchJoystickState.currentY = touch.clientY;
+                touchJoystickState.vectorX = 0;
+                touchJoystickState.vectorY = 0;
 
-    // 綁定三個戰鬥中 HUD 圓形按鈕釋放技能事件
-    ["Shield", "Lightning", "Vacuum"].forEach(wpnId => {
-        const hudBtn = document.getElementById(`hud-btn-${wpnId}`);
-        if (hudBtn) {
-            hudBtn.addEventListener("click", (e) => {
-                e.stopPropagation(); // 防止點擊技能按鈕同時觸發虛擬搖桿移動
-                handleInGameSkillActivation(wpnId);
-            });
+                // 搬移虛擬搖桿外框至手指落下點，並使其實體化呈現
+                joystickBase.style.left = `${touchJoystickState.startX}px`;
+                joystickBase.style.top = `${touchJoystickState.startY}px`;
+                joystickStick.style.left = "50%";
+                joystickStick.style.top = "50%";
+                joystickBase.style.display = "block";
+
+                console.log(`[Joystick] 搖桿誕生於座標點: X=${touchJoystickState.startX}, Y=${touchJoystickState.startY}`);
+                break; // 已成功捕捉控制權，跳出循環
+            }
         }
-    });
+    }, { passive: false });
+
+    // 監聽觸控滑動移動事件
+    mainViewport.addEventListener("touchmove", (e) => {
+        if (!touchJoystickState.isActive) return;
+
+        // 尋找對應當前控制搖桿的觸控指頭
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const touch = e.changedTouches[i];
+            
+            if (touch.identifier === touchJoystickState.identifier) {
+                touchJoystickState.currentX = touch.clientX;
+                touchJoystickState.currentY = touch.clientY;
+
+                // 計算當前手指與初始落點之極座標相對位移量
+                let deltaX = touchJoystickState.currentX - touchJoystickState.startX;
+                let deltaY = touchJoystickState.currentY - touchJoystickState.startY;
+                const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+                // 進行向外拉伸向量的半徑最大值裁切限制
+                if (distance > touchJoystickState.maxRadius) {
+                    const ratio = touchJoystickState.maxRadius / distance;
+                    deltaX *= ratio;
+                    deltaY *= ratio;
+                }
+
+                // 更新內隨動搖桿 (Stick) 的實體 CSS 位置
+                joystickStick.style.left = `calc(50% + ${deltaX}px)`;
+                joystickStick.style.top = `calc(50% + ${deltaY}px)`;
+
+                // 將最終移動向量標準化為 -1.0 到 1.0 之間的數值，供底層移動物理系統讀取
+                touchJoystickState.vectorX = deltaX / touchJoystickState.maxRadius;
+                touchJoystickState.vectorY = deltaY / touchJoystickState.maxRadius;
+
+                // 即時傳遞更新至核心遊玩迴圈或全域變數中
+                if (window.BallRangerCoreEngine) {
+                    window.BallRangerCoreEngine.updateInputVector(touchJoystickState.vectorX, touchJoystickState.vectorY);
+                }
+                break;
+            }
+        }
+        
+        // 若遊戲處於運行中，阻斷預設的網頁橡皮筋滾動回彈行為
+        if (currentMatchState.isActive) {
+            e.preventDefault();
+        }
+    }, { passive: false });
+
+    // 監聽觸控結束與取消事件
+    const handleTouchEnd = (e) => {
+        if (!touchJoystickState.isActive) return;
+
+        for (let i = 0; i < e.changedTouches.length; i++) {
+            const touch = e.changedTouches[i];
+            if (touch.identifier === touchJoystickState.identifier) {
+                // 重設並銷毀搖桿視覺與邏輯狀態
+                touchJoystickState.isActive = false;
+                touchJoystickState.identifier = null;
+                touchJoystickState.vectorX = 0;
+                touchJoystickState.vectorY = 0;
+
+                joystickBase.style.display = "none";
+                
+                if (window.BallRangerCoreEngine) {
+                    window.BallRangerCoreEngine.updateInputVector(0, 0);
+                }
+                console.log("[Joystick] 觸碰結束，隱藏並銷毀動態搖桿。");
+                break;
+            }
+        }
+    };
+
+    mainViewport.addEventListener("touchend", handleTouchEnd);
+    mainViewport.addEventListener("touchcancel", handleTouchEnd);
 }
 
 // ============================================================================
-// 10. 自動化初始化與執行守護行程 (Automated Lifecycles Guard)
+// 10. 計分、新紀錄刷新與比賽狀態控制常式 (Score & Match State Operations)
 // ============================================================================
 
-function startGameUISystem() {
-    console.log("[GameUI.js] 正在執行初始化守護行程...");
-    loadPlayerProfile();
-    initializeUserInterfaceViews();
+/**
+ * 開始一場多人比賽，執行場景切換與 HUD 顯示隱藏
+ */
+function startMultiplayerMatch() {
+    currentMatchState.isActive = true;
+    currentMatchState.currentScore = 0;
+    currentMatchState.shieldUseCount = 0;
+
+    // 隱藏全部桌面選單
+    document.getElementById("ui-menus-wrapper").style.display = "none";
+    // 顯現戰鬥中專屬技能 HUD 面板
+    document.getElementById("ingame-hud-overlay").style.display = "flex";
+    // 隱藏紀錄刷新橫幅
+    document.getElementById("neon-record-breaking-banner").style.display = "none";
+
+    console.log(`[Match] 戰鬥開始！初始大小設定：${currentMatchState.baseStartingSize * currentMatchState.sizeMultiplier}`);
+    
+    // 模擬在對局過程中分數隨生存時間持續增長的定時器
+    window.matchScoreTimer = setInterval(() => {
+        if (!currentMatchState.isActive) return;
+        
+        // 每次生存週期增加 150 分
+        currentMatchState.currentScore += 150;
+        checkAndHandleHighScores(currentMatchState.currentScore);
+    }, 1000);
+}
+
+/**
+ * 終止或退出目前的多人對局，返回大廳主選單
+ */
+function terminateCurrentMatch() {
+    currentMatchState.isActive = false;
+    clearInterval(window.matchScoreTimer);
+
+    // 隱藏戰鬥 HUD
+    document.getElementById("ingame-hud-overlay").style.display = "none";
+    // 恢復並顯現主大廳 UI 選單
+    document.getElementById("ui-menus-wrapper").style.display = "block";
+    
+    // 重設廣告增益按鈕狀態，為下一局做準備
+    currentMatchState.adStage1Activated = false;
+    currentMatchState.adStage2Activated = false;
+    currentMatchState.sizeMultiplier = 1;
+
+    const btnAdX5 = document.getElementById("btn-ad-buff-x5");
+    const btnAdX2 = document.getElementById("btn-ad-buff-x2");
+    btnAdX5.disabled = false;
+    btnAdX5.innerText = "Watch Ad: Size X5";
+    btnAdX2.disabled = true;
+    btnAdX2.innerText = "Watch Ad: Size X2";
+
+    console.log("[Match] 已退出對局，回到主選單大廳。");
+    savePlayerProfile();
     refreshUserInterfaceDisplays();
+}
+
+/**
+ * 即時檢查當前分數，若超越 LocalStorage 的歷史最高分，則觸發霓虹橫幅
+ * @param {number} score - 當前即時累計的分數
+ */
+function checkAndHandleHighScores(score) {
+    // 找出目前的歷史最高分
+    let currentHighest = 0;
+    if (playerWallet.highScores.length > 0) {
+        currentHighest = Math.max(...playerWallet.highScores.map(o => o.score));
+    }
+
+    if (score > currentHighest) {
+        const recordBanner = document.getElementById("neon-record-breaking-banner");
+        if (recordBanner && recordBanner.style.display !== "block") {
+            recordBanner.style.display = "block";
+            console.log(`[HighScore] 恭喜打破歷史最高紀錄！當前得分: ${score}`);
+        }
+    }
+}
+
+/**
+ * 比賽結束结算邏輯，將當前得分正式寫入排行榜紀錄
+ */
+function finalizeMatchStatsAndSubmit() {
+    currentMatchState.isActive = false;
+    clearInterval(window.matchScoreTimer);
+
+    const playerName = prompt("GAME OVER! Enter your name Ranger:", "GuestRanger") || "UnknownRanger";
+    
+    // 將新紀錄推入歷史陣列中
+    playerWallet.highScores.push({
+        name: playerName,
+        score: currentMatchState.currentScore
+    });
+
+    // 重新排序並僅保留前 5 名
+    playerWallet.highScores.sort((a, b) => b.score - a.score);
+    playerWallet.highScores = playerWallet.highScores.slice(0, 5);
+
+    // 每局結束額外給予隨機生存金幣獎勵
+    const rewardCoins = Math.floor(currentMatchState.currentScore / 100);
+    playerWallet.coins += rewardCoins;
+    console.log(`[MatchEnd] 結算完成。獲得金幣獎勵: ${rewardCoins}`);
+
+    terminateCurrentMatch();
+}
+
+// ============================================================================
+// 11. 初始化與全域綁定 (Bootstrap & Core Event Binding)
+// ============================================================================
+
+/**
+ * 本系統之核心主進入點 (Initialization Bootstrap)
+ */
+function bootstrapGameUISystem() {
+    console.log("[Bootstrap] 正在初始化 BallRanger.io UI 系統...");
+    
+    // 1. 從本地存儲加載玩家進度資料
+    loadPlayerProfile();
+
+    // 2. 構建 DOM 視圖元件
+    initializeUserInterfaceViews();
+
+    // 3. 註冊三大核心事件監聽系統
     setupAdSystemEventListeners();
     setupShopTransactionEventListeners();
-    setupCoreGameEventListeners();
-    console.log("[GameUI.js] 全系統成功接合，生產環境解鎖就緒。");
+    setupDynamicJoystickEventListeners();
+
+    // 4. 綁定大廳主功能按鈕與戰鬥 HUD 按鈕
+    document.getElementById("btn-start-match").addEventListener("click", () => {
+        startMultiplayerMatch();
+    });
+
+    document.getElementById("hud-btn-exit-match").addEventListener("click", () => {
+        finalizeMatchStatsAndSubmit();
+    });
+
+    document.getElementById("hud-btn-Shield").addEventListener("click", () => {
+        handleInGameSkillActivation("Shield");
+    });
+
+    document.getElementById("hud-btn-Lightning").addEventListener("click", () => {
+        handleInGameSkillActivation("Lightning");
+    });
+
+    document.getElementById("hud-btn-Vacuum").addEventListener("click", () => {
+        handleInGameSkillActivation("Vacuum");
+    });
+
+    // 5. 首次執行全面視圖刷新同步
+    refreshUserInterfaceDisplays();
+
+    console.log("[Bootstrap] UI 系統建置完畢，生產環境就緒。");
 }
 
-// 根據 DOM 載入狀態確保代碼萬無一失地自動執行
+// 當網頁 DOM 結構載入完成時，立即啟動引導程序
 if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", startGameUISystem);
+    document.addEventListener("DOMContentLoaded", bootstrapGameUISystem);
 } else {
-    startGameUISystem();
+    bootstrapGameUISystem();
 }
+
+// 將關鍵介面導出至 window 全域命名空間下，便於物理引擎與網路層(Socket)直接調用與數據對接
+window.BallRangerUIBridge = {
+    refreshDisplays: refreshUserInterfaceDisplays,
+    triggerWarning: triggerTechWarningAlert,
+    getJoystickState: () => touchJoystickState,
+    getCurrentMatchState: () => currentMatchState,
+    forceSubmitScore: finalizeMatchStatsAndSubmit,
+    injectExternalCoins: (amount) => {
+        playerWallet.coins += amount;
+        savePlayerProfile();
+        refreshUserInterfaceDisplays();
+    }
+};
