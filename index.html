@@ -5,84 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>BallRanger.io</title>
     <style>
-        /* ==================================================
-           GLOBAL RESET & TEXTURE (全域重設與防止滾動干擾)
-           ================================================== */
         * {
             box-sizing: border-box;
             margin: 0;
             padding: 0;
-            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            user-select: none;
-            -webkit-user-select: none;
         }
-
         body, html {
             width: 100%;
             height: 100%;
             overflow: hidden;
             background-color: #05050b;
-            color: #ffffff;
-            position: relative;
         }
-
-        /* ==================================================
-           SCIENTIFIC GLASSMORPHISM (高科技磨桑玻璃與排版間距)
-           ================================================== */
-        .glass-panel {
-            background: rgba(15, 15, 30, 0.7);
-            backdrop-filter: blur(15px);
-            -webkit-backdrop-filter: blur(15px);
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            border-radius: 20px;
-            box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.6);
-        }
-
-        /* 核心動作按鈕 */
-        .btn-action {
-            background: linear-gradient(135deg, #ff416c, #ff4b2b);
-            color: #ffffff;
-            border: none;
-            padding: 16px 32px;
-            font-size: 1.2rem;
-            font-weight: 800;
-            letter-spacing: 3px;
-            border-radius: 35px;
-            cursor: pointer;
-            box-shadow: 0 6px 20px rgba(255, 65, 108, 0.4);
-            transition: transform 0.2s, box-shadow 0.2s;
-            width: 100%;
-            text-align: center;
-        }
-
-        .btn-action:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(255, 65, 108, 0.6);
-        }
-
-        /* 次要功能按鈕 */
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            color: #ffffff;
-            padding: 14px 20px;
-            font-size: 0.95rem;
-            font-weight: 600;
-            letter-spacing: 1px;
-            border-radius: 12px;
-            cursor: pointer;
-            transition: background 0.2s, border-color 0.2s;
-            width: 100%;
-        }
-
-        .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.18);
-            border-color: rgba(255, 255, 255, 0.4);
-        }
-
-        /* ==================================================
-           CANVAS VIEWPORT LAYER (3D 畫布基礎定位 - 必須撐滿)
-           ================================================== */
+        /* 3D 畫底層 */
         #canvas-container {
             position: absolute;
             top: 0;
@@ -90,254 +24,37 @@
             width: 100vw;
             height: 100vh;
             z-index: 1;
-            display: block !important; /* 強制避免被任何 JS 隱藏 */
-        }
-
-        /* 確保 Three.js 自動產生的畫布填滿容器 */
-        #canvas-container canvas {
-            width: 100% !important;
-            height: 100% !important;
-            display: block;
         }
 
         /* ==================================================
-           GLOBAL MESSAGE ALERT (全域系統提示紅框)
+           【核心修正】強制覆寫 GameUI.js 製造出來的重疊面板
            ================================================== */
-        #global-message {
-            position: fixed;
-            top: 5%;
-            left: 50%;
-            transform: translateX(-50%) translateY(-20px);
-            z-index: 9999;
-            padding: 18px 36px;
-            border: 2px solid #ff3333;
-            background: rgba(25, 5, 5, 0.95);
-            color: #ff4444;
-            font-weight: bold;
-            letter-spacing: 1px;
-            text-align: center;
-            opacity: 0;
-            pointer-events: none;
-            transition: transform 0.3s ease, opacity 0.3s ease;
+        #panel-main-menu {
+            left: 50% !important;
+            top: 35% !important;
+            transform: translate(-50%, -50%) !important;
+            width: 90% !important;
+            max-width: 400px !important;
+        }
+        #panel-armory-shop {
+            left: 50% !important;
+            top: 78% !important;
+            transform: translate(-50%, -50%) !important;
+            width: 90% !important;
+            max-width: 450px !important;
+            max-height: 35vh !important;
         }
 
-        #global-message.show {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
+        /* 當遊戲開始時，強制把 GameUI 的選單藏到幕後，撕開黑布！ */
+        body.game-active #panel-main-menu,
+        body.game-active #panel-armory-shop {
+            display: none !important;
         }
 
-        /* ==================================================
-           MAIN MENU LOBBY LAYOUT (大廳排版 - 徹底解決擠壓問題)
-           ================================================== */
-        #main-menu {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 10;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            padding: 40px 20px;
-            background: radial-gradient(circle at center, rgba(10, 10, 30, 0.4) 0%, rgba(5, 5, 11, 0.92) 100%);
-            overflow-y: auto; /* 手機版內容過長時允許滾動，絕不疊加 */
-        }
-
-        /* 雙卡片主容器：PC端橫排，設定固定 Gap 絕不貼死 */
-        .lobby-container {
-            display: flex;
-            flex-direction: row;
-            width: 100%;
-            max-width: 1100px;
-            gap: 40px; 
-            justify-content: center;
-            align-items: stretch;
-        }
-
-        /* 單個卡片基礎：確保高度不被壓縮 */
-        .menu-card {
-            flex: 1;
-            min-width: 320px;
-            padding: 40px;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            gap: 30px; /* 卡片內部元件的安全間距 */
-            flex-shrink: 0; /* 強制不允許被瀏覽器壓扁 */
-        }
-
-        .brand-section h1 {
-            font-size: 3rem;
-            font-weight: 900;
-            letter-spacing: 4px;
-            background: linear-gradient(45deg, #00f2fe, #4facfe);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            margin-bottom: 12px;
-        }
-
-        .brand-section p {
-            color: #8a8ab0;
-            font-size: 1rem;
-            line-height: 1.6;
-        }
-
-        /* 數據行排版 */
-        .stat-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 16px 24px;
-            border-radius: 14px;
-            margin-bottom: 16px;
-            border-left: 4px solid #00f2fe;
-        }
-
-        .stat-label {
-            font-size: 0.95rem;
-            color: #a0a0cc;
-            letter-spacing: 1px;
-            text-transform: uppercase;
-        }
-
-        .stat-value {
-            font-size: 1.4rem;
-            font-weight: 800;
-            color: #00f2fe;
-        }
-
-        /* 增益按鈕網格 */
-        .modifier-group {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 16px;
-            margin-top: 20px;
-        }
-
-        /* ==================================================
-           GAMEPLAY HUD LAYER (局內 UI 實時層)
-           ================================================== */
-        #game-hud {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            z-index: 5;
-            pointer-events: none;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-            padding: 30px;
-        }
-
-        /* 排行榜 */
-        #leaderboard-list {
-            position: absolute;
-            top: 30px;
-            right: 30px;
-            width: 280px;
-            padding: 24px;
-            pointer-events: auto;
-        }
-
-        #leaderboard-list h3 {
-            font-size: 1rem;
-            letter-spacing: 2px;
-            color: #ff4b2b;
-            margin-bottom: 12px;
-            text-transform: uppercase;
-            border-bottom: 1px solid rgba(255, 75, 43, 0.3);
-            padding-bottom: 8px;
-        }
-
-        .leaderboard-item {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.9rem;
-            margin-bottom: 8px;
-            color: #e0e0ff;
-        }
-
-        /* 控制按鈕組 */
-        .hud-controls {
-            position: absolute;
-            bottom: 40px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 25px;
-            pointer-events: auto;
-        }
-
-        #btn-dash, #btn-weapon {
-            width: 85px;
-            height: 85px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 900;
-            font-size: 0.9rem;
-            letter-spacing: 1px;
-            cursor: pointer;
-            box-shadow: 0 6px 20px rgba(0,0,0,0.6);
-            transition: transform 0.1s, background-color 0.3s;
-            border: 2px solid rgba(255,255,255,0.25);
-        }
-
-        #btn-dash {
-            background: linear-gradient(135deg, #11998e, #38ef7d);
-        }
-
-        #btn-weapon {
-            background: linear-gradient(135deg, #8e2de2, #4a00e0);
-            position: relative;
-        }
-
-        #btn-weapon.locked::after {
-            content: '🔒';
-            position: absolute;
-            top: -4px;
-            right: -4px;
-            font-size: 1.3rem;
-        }
-
-        /* ==================================================
-           RESPONSIVE RE-LAYOUT (手機響應式：強制垂直排列，拒絕重疊)
-           ================================================== */
-        @media (max-width: 820px) {
-            #main-menu {
-                align-items: flex-start; /* 頂部對齊，允許順暢向下滑動 */
-                padding: 30px 15px;
-            }
-
-            .lobby-container {
-                flex-direction: column; /* 強制單行垂直排列 */
-                gap: 25px;
-            }
-
-            .menu-card {
-                width: 100%;
-                padding: 30px 20px;
-                gap: 20px;
-            }
-
-            .brand-section h1 {
-                font-size: 2.3rem;
-            }
-
-            .hud-controls {
-                bottom: 30px;
-                gap: 20px;
-            }
-
-            #btn-dash, #btn-weapon {
-                width: 75px;
-                height: 75px;
-                font-size: 0.85rem;
+        /* 手機與 iPad 響應式微調 */
+        @media (max-height: 700px) {
+            #panel-armory-shop {
+                top: 82% !important;
             }
         }
     </style>
@@ -346,92 +63,28 @@
 
     <div id="canvas-container"></div>
 
-    <div id="global-message" class="glass-panel">
-        WEAPON NOT PURCHASED! PLEASE BUY IT IN THE ARMORY.
-    </div>
-
-    <div id="main-menu">
-        <div class="lobby-container">
-            
-            <div class="menu-card glass-panel">
-                <div class="brand-section">
-                    <h1>BALLRANGER.IO</h1>
-                    <p>Roll through the arena, absorb energy cores, and dominate the ranking network.</p>
-                </div>
-                <div>
-                    <button id="start-btn" class="btn-action">START GAME</button>
-                </div>
-            </div>
-
-            <div class="menu-card glass-panel">
-                <div>
-                    <div class="brand-section" style="margin-bottom: 15px;">
-                        <h2 style="font-size: 1.3rem; letter-spacing: 2px; color: #4facfe;">ARMORY STOCKS</h2>
-                    </div>
-                    
-                    <div class="stat-row">
-                        <span class="stat-label">LIGHTNING AMMO</span>
-                        <span id="ui-lightning-count" class="stat-value">0</span>
-                    </div>
-
-                    <div class="stat-row">
-                        <span class="stat-label">VACUUM AMMO</span>
-                        <span id="ui-vacuum-count" class="stat-value">0</span>
-                    </div>
-                </div>
-
-                <div>
-                    <button id="ad-ammo-btn" class="btn-secondary">
-                        WATCH AD FOR AMMO
-                    </button>
-
-                    <div class="modifier-group">
-                        <button id="x2-btn" class="btn-secondary">SIZE x2</button>
-                        <button id="x5-btn" class="btn-secondary">BUFF x5</button>
-                    </div>
-                </div>
-            </div>
-
-        </div>
-    </div>
-
-    <div id="game-hud" style="display: none;">
-        <div id="leaderboard-list" class="glass-panel">
-            <h3>Top Rangers</h3>
-        </div>
-
-        <div class="hud-controls">
-            <div id="btn-dash">DASH</div>
-            <div id="btn-weapon" class="locked">SKILL</div>
-        </div>
-    </div>
-
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
     <script>
-        // 強制初始化全域變數，確保附屬子腳本不崩潰
-        window.isGameRunning = false;
-        window.playerWallet = window.playerWallet || { 
-            coins: 5, 
-            lightning: 0, 
-            vacuum: 0, 
-            hasShield: false, 
-            hasLightning: false, 
-            hasVacuum: false 
-        };
-
-        // 萬能全域防禦：當玩家點下 START 卻黑畫面時，強制對 Three.js 發出視窗重繪通知
+        // 自動監聽 GameUI.js 生出來的 START 按鈕
         document.addEventListener('DOMContentLoaded', () => {
-            const startBtn = document.getElementById('start-btn');
-            if (startBtn) {
-                startBtn.addEventListener('click', () => {
-                    setTimeout(() => {
-                        console.log("[Master Socket] 執行 3D 畫布重繪防禦，喚醒黑屏...");
-                        // 觸發全域 Resize 事件，強迫 MainScene.js 重新計算鏡頭與渲染器尺寸
-                        window.dispatchEvent(new Event('resize'));
-                    }, 100); // 延時 100ms 等待 HUD 切換完畢後立刻校正
-                });
-            }
+            // 用一個定時器，不斷去網頁上抓按鈕，只要一出現就幫它綁定「撕開黑布」的機關
+            const checkTimer = setInterval(() => {
+                const startBtn = document.getElementById('btn-start-match');
+                if (startBtn) {
+                    console.log("[Master Socket] 成功攔截到 GameUI 的 START 按鈕！");
+                    startBtn.addEventListener('click', () => {
+                        // 給身體蓋一個章：遊戲激活了！
+                        document.body.classList.add('game-active');
+                        
+                        // 叫醒 3D 引擎重新繪製畫面
+                        setTimeout(() => {
+                            window.dispatchEvent(new Event('resize'));
+                        }, 150);
+                    });
+                    clearInterval(checkTimer); // 抓到了就停止定時器
+                }
+            }, 100);
         });
     </script>
 
